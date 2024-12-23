@@ -172,10 +172,10 @@ def turn_to_heading_PID(heading, max_power = 12):
         derivative_gain = (error - prev_error) * turn_Kd
 
         # calculate total PID output
-        drive_speed = proportional_gain + integra_gain + derivative_gain
+        turn_speed = proportional_gain + integra_gain + derivative_gain
 
         # clamp output to max with correct sign
-        if abs(drive_speed) > max_power:
+        if abs(turn_speed) > max_power:
              turn_speed = max_power * (abs(proportional_gain)/proportional_gain)
 
         # set motor velocity. A team uses voltage for motor control. 8.3 is to convert voltage to percent. Motor max is 12V.
