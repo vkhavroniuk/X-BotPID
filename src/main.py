@@ -42,6 +42,9 @@ belt_motor = Motor(Ports.PORT14, GearSetting.RATIO_6_1, True)
 is_intake_spinning = False
 is_belt_spinning = False
 
+robot_wheel_diameter = 3.25
+robot_gear_ratio = 0.6
+
 def reset_motor_encoders():
     """
         resets motor group encoders to zero
@@ -53,11 +56,9 @@ def get_position_inches():
     """
         Returns traveled postion in inches based on motor rotations, wheel diameter, gear ratio. 
     """
-    wheel_diameter = 3.25
-    gear_ratio = 0.6
     average_position = (right_motors.position(TURNS) + left_motors.position(TURNS))/2 
-    wheel_circumference =  wheel_diameter * 3.14159  
-    average_position_inches = average_position * wheel_circumference * gear_ratio
+    wheel_circumference =  robot_wheel_diameter * 3.14159  
+    average_position_inches = average_position * wheel_circumference * robot_gear_ratio
     return average_position_inches
 
 def drive_PID(distance, max_power=8):
