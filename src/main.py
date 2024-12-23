@@ -56,10 +56,11 @@ def get_position_inches():
     wheel_diameter = 3.25
     gear_ratio = 0.6
     average_position = (right_motors.position(TURNS) + left_motors.position(TURNS))/2 
-    average_position_inches = average_position * wheel_diameter * gear_ratio
+    wheel_circumference =  wheel_diameter * 3.14159  
+    average_position_inches = average_position * wheel_circumference * gear_ratio
     return average_position_inches
 
-def drive_PID(distance, max_power=10):
+def drive_PID(distance, max_power=8):
     """
         Simple PID driving function. No heading correction yet
     """
@@ -120,7 +121,7 @@ def drive_PID(distance, max_power=10):
 
 def optimize_turning_angle(angle):
     """
-        if robot requested to turn more than 180 degress, then it turns to opposite side to save time
+        if robot requested to turn more than 180 degress, then it turns to the opposite side to save time
     """
     angle = angle % 360
     if angle < -180:
@@ -132,7 +133,7 @@ def optimize_turning_angle(angle):
 
 def turn_to_heading_PID(heading, max_power = 12):
     """ 
-        Simple PID turning function
+        Simple PID turning function. Turns robot to specified heading [0..360]
     """
     # set turn PID params
     turn_Kp = 0.4
