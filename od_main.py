@@ -15,7 +15,7 @@ from vex import *
 ############################################################################################################################################
 
 class PID:
-    def __init__(self, error, kp, ki, kd, start_integrating, exit_error, min_clamp, max_clamp) -> None:
+    def __init__(self, error, kp, ki, kd, start_integrating, exit_error, min_clamp, max_clamp, timeout = 3000) -> None:
         self.kp = kp
         self.ki = ki
         self.kd = kd
@@ -26,17 +26,32 @@ class PID:
         self.max_clamp = max_clamp
         self.integral = 0
         self.prev_error = error
+        self.first_run = False
+        self.start_time = 0
+        self.timer = Timer()
+        self.timeout = timeout
 
     @property
-    def isSettled(self) -> bool:
+    def is_settled(self) -> bool:
         if (abs(self.error) < self.exit_error):
             return True
         else:
             return False
     
-    def caclulate(self, error) -> float:
-        self.error = error
+    @property
+    def is_timeout(self) -> bool:
+        current_timer = self.timer.system_high_res() / 1000
+        if (current_timer - self.start_time > self.timeout) and not self.first_run:
+            return True
+        else:
+            return False 
 
+    def caclulate(self, error) -> float:
+        if self.first_run:
+            self.first_run = False
+            self.start_time = self.timer.system_high_res() / 1000
+
+        self.error = error
         # calculate proportional
         proportional_gain = self.error * self.kp
 
@@ -264,7 +279,7 @@ class Robot:
         drive_pid = PID(error, self.dr_Kp, self.dr_Ki, self.dr_Kd, self.dr_start_integrate, self.dr_exit_erorr, self.dr_min_pid, max_power)
         heading_pid = PID(heading_error, 0.4, 0, 1, 1, 1, 0, 6)
 
-        while not drive_pid.isSettled:
+        while not drive_pid.is_settled or not drive_pid.timeout:
             current_position = self.get_vertical_position_inches()
             error = end_positin - current_position
             drive_speed = drive_pid.caclulate(error)
@@ -295,7 +310,7 @@ class Robot:
         turn_pid = PID(error, self.turn_Kp, self.turn_Ki, self.turn_Kd, self.turn_start_integrate, self.turn_exit_erorr, self.turn_min_pid, max_power)
         
 
-        while not turn_pid.isSettled:
+        while not turn_pid.is_settled or not turn_pid.timeout:
             # calculate error
             current_heading = brain_inertial.heading(DEGREES)
             error = optimize_turning_angle(heading - current_heading)
@@ -330,9 +345,6 @@ right_motor_t = Motor(Ports.PORT11, GearSetting.RATIO_6_1, True)
 
 right_motors = MotorGroup(right_motor_b, right_motor_b, right_motor_t)
 
-
-
-
 # Clamp and Scoring mech
 clamp_pneumatic = DigitalOut(brain.three_wire_port.h)
 hang_pneumatic = DigitalOut(brain.three_wire_port.a)
@@ -350,82 +362,6 @@ robot_gear_ratio = 0.6
 xbot = Robot(brain_inertial, left_motors, right_motors, robot_gear_ratio, robot_wheel_diameter, None, None)
 
 
-def reset_motor_encoders():
-    """
-        resets motor group encoders to zero
-    """
-    right_motors.reset_position()
-    left_motors.reset_position()
-
-def get_position_inches():
-    """
-        Returns traveled postion in inches based on motor rotations, wheel diameter, gear ratio. 
-    """
-    average_position = (right_motors.position(TURNS) + left_motors.position(TURNS))/2 
-    wheel_circumference =  robot_wheel_diameter * 3.14159  
-    average_position_inches = average_position * wheel_circumference * robot_gear_ratio
-    return average_position_inches
-
-
-def drive_PID(distance, max_power=8):
-    """
-        Simple PID driving function. No heading correction yet
-    """
-    # set drive PID params
-    dr_Kp = 1.5
-    dr_Ki = 0
-    dr_Kd = 12
-    dr_start_integrate = 1
-    dr_exit_erorr = 1
-    integral = 0
-    
-    # reset encoders to zero
-    reset_motor_encoders()
-
-    # initial params
-    error = distance - get_position_inches()
-    prev_error = error
-
-    while abs(error) > dr_exit_erorr:
-        # calculate error
-        error = distance - get_position_inches()
-        
-        # calculate proportional
-        proportional_gain = error * dr_Kp
-
-        # if error less than start_integrate - accumulate integral
-        if abs(error) < dr_start_integrate:
-            integral = integral + error
-        else:
-            integral = 0
-
-        # if error crosses 0 - reset integral 
-        if (error > 0 and prev_error < 0) or (error <0 and prev_error > 0):
-            integral = 0
-
-        # calculate I component of PID
-        integra_gain = integral * dr_Ki
-
-        # calculate D component of PID
-        derivative_gain = (error - prev_error) * dr_Kd
-
-        # calculate total PID output
-        drive_speed = proportional_gain + integra_gain + derivative_gain
-
-        # clamp output to max with correct sign
-        if abs(drive_speed) > max_power:
-             drive_speed = max_power * (abs(proportional_gain)/proportional_gain)
-
-        # set motor velocity. A team uses voltage for motor control. 8.3 is to convert voltage to percent. Motor max is 12V.
-        left_motors.spin(FORWARD, drive_speed * 8.3, VelocityUnits.PERCENT)
-        right_motors.spin(FORWARD, drive_speed * 8.3, VelocityUnits.PERCENT)
-        wait(20, MSEC)
-        prev_error = error
-        
-    left_motors.stop(BRAKE)
-    right_motors.stop(BRAKE)
-
-
 def optimize_turning_angle(angle):
     """
         if robot requested to turn more than 180 degress, then it turns to the opposite side to save time
@@ -438,73 +374,9 @@ def optimize_turning_angle(angle):
     return angle
 
 
-def turn_to_heading_PID(heading, max_power = 12):
-    """ 
-        Simple PID turning function. Turns robot to specified heading [0..360]
-    """
-    # set turn PID params
-    turn_Kp = 0.4
-    turn_Ki = 0.04
-    turn_Kd = 3
-    turn_start_integrate = 15
-    turn_exit_erorr = 1
-    integral = 0
-    
-   # initial params
-    current_heading = brain_inertial.heading(DEGREES)
-    error = optimize_turning_angle(heading - current_heading)
-    prev_error = error
-
-    while abs(error) > turn_exit_erorr:
-        # calculate error
-        current_heading = brain_inertial.heading(DEGREES)
-        error = optimize_turning_angle(heading - current_heading)
-
-        # calculate proportional
-        proportional_gain = error * turn_Kp
-
-        # if error less than start_integrate - accumulate integral
-        if abs(error) < turn_start_integrate:
-            integral = integral + error
-        else:
-            integral = 0
-
-        # if error crosses 0 - reset integral 
-        if (error > 0 and prev_error < 0) or (error <0 and prev_error > 0):
-            integral = 0
-
-        # calculate I component of PID
-        integra_gain = integral * turn_Ki
-
-        # calculate D component of PID
-        derivative_gain = (error - prev_error) * turn_Kd
-
-        # calculate total PID output
-        turn_speed = proportional_gain + integra_gain + derivative_gain
-
-        # clamp output to max with correct sign
-        if abs(turn_speed) > max_power:
-             turn_speed = max_power * (abs(proportional_gain)/proportional_gain)
-
-        # set motor velocity. A team uses voltage for motor control. 8.3 is to convert voltage to percent. Motor max is 12V.
-        left_motors.spin(FORWARD,  turn_speed * 8.3, VelocityUnits.PERCENT)
-        right_motors.spin(FORWARD, -1 * turn_speed * 8.3, VelocityUnits.PERCENT)
-
-        prev_error = error
-        wait(20, MSEC)
-
-    left_motors.stop(BRAKE)
-    right_motors.stop(BRAKE)
-
-
 ############################################################################
 # General Functions (Intake, Arm, Hang)                                    #
 ############################################################################
-
-def set_initial_params():
-    """ Set initial params
-    """
-    brain_inertial.set_heading(90)
 
 
 def calibrate_inertial():
@@ -594,17 +466,6 @@ def autonomous():
     brain.screen.clear_screen()
     brain.screen.print("Autonomous Control Mode")
 
-    # test for external PID
-    """drive_PID(-29, 4)
-    wait(20, MSEC)
-    clamp()
-    wait(400, MSEC)
-    score()
-    wait(400, MSEC)
-    turn_to_heading_PID(0)
-    wait(200, MSEC)
-    drive_PID(30)"""
-
     # test for Robot Class PID
     xbot.start_odometry()
     xbot.set_brake(BRAKE)
@@ -658,8 +519,6 @@ controller.buttonR1.pressed(score)
 
 # set params, calibrate inertial
 calibrate_inertial()
-set_initial_params()
-
 xbot.set_position(0,0, 90)
 
 # start thread to output data for debugging
