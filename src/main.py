@@ -9,6 +9,63 @@
 # Library imports
 from vex import *
 
+
+class PID:
+    def __init__(self, error, kp, ki, kd, start_integrating, exit_error, min_clamp, max_clamp) -> None:
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.error = error
+        self.start_integrating = start_integrating
+        self.exit_error = exit_error
+        self.min_clamp = min_clamp
+        self.max_clamp = max_clamp
+        self.integral = 0
+        self.prev_error = error
+
+    @property
+    def isSettled(self) -> bool:
+        if (abs(self.error) < self.exit_error):
+            return True
+        else:
+            return False
+    
+    def caclulate(self, error) -> float:
+        self.error = error
+
+        # calculate proportional
+        proportional_gain = self.error * self.kp
+
+        # if error less than start_integrate - accumulate integral
+        if abs(self.error) < self.start_integrating:
+            self.integral = self.integral + self.error
+        else:
+            self.integral = 0
+
+        # if error crosses 0 - reset integral 
+        if (self.error > 0 and self.prev_error < 0) or (self.error <0 and self.prev_error > 0):
+            self.integral = 0
+
+        # calculate I component of PID
+        integra_gain = self.integral * self.ki
+
+        # calculate D component of PID
+        derivative_gain = (self.error - self.prev_error) * self.kd
+
+        # calculate total PID output
+        drive_speed = proportional_gain + integra_gain + derivative_gain
+
+        # clamp output to max with correct sign
+        if abs(drive_speed) > self.max_clamp:
+            drive_speed = self.max_clamp * (abs(proportional_gain)/proportional_gain)
+
+        # clamp output to min with correct sign
+        if abs(drive_speed) < self.min_clamp:
+            drive_speed = self.min_clamp * (abs(proportional_gain)/proportional_gain)
+        wait(20, MSEC)
+        self.prev_error = self.error
+        return drive_speed
+
 # global instances
 brain = Brain()
 controller = Controller()
@@ -35,6 +92,7 @@ smartdrive = SmartDrive(left_motors, right_motors, brain_inertial, 156, 340, 230
 
 # Clamp and Scoring mech
 clamp_pneumatic = DigitalOut(brain.three_wire_port.h)
+hang_pneumatic = DigitalOut(brain.three_wire_port.a)
 intake_motor = Motor(Ports.PORT7, GearSetting.RATIO_6_1, True)
 belt_motor = Motor(Ports.PORT14, GearSetting.RATIO_6_1, True)
 
@@ -61,6 +119,43 @@ def get_position_inches():
     average_position_inches = average_position * wheel_circumference * robot_gear_ratio
     return average_position_inches
 
+
+def drive_PIDc(distance, heading = None, max_power=8):
+    """
+        Simple PID driving function. No heading correction yet
+    """
+    if not heading:
+        heading = brain_inertial.heading(DEGREES)
+
+    # get initial position and initial errpr
+    current_position = get_position_inches()
+    end_positin = current_position + distance
+    error = end_positin - current_position
+
+    # get initial heading and initial heading error
+    current_heading = brain_inertial.heading(DEGREES)
+    heading_error = optimize_turning_angle(heading - current_heading)
+
+    drive_pid = PID(error, 1.5, 0, 12, 1, 1, 2, max_power)
+    heading_pid = PID(heading_error, 0.4, 0, 1, 1, 1, 0, 6)
+
+    while not drive_pid.isSettled:
+        current_position = get_position_inches()
+        error = end_positin - current_position
+        drive_speed = drive_pid.caclulate(error)
+        
+        current_heading = brain_inertial.heading(DEGREES)
+        heading_error = optimize_turning_angle(heading - current_heading)
+        heading_correction_speed = heading_pid.caclulate(heading_error)
+        
+        # set motor velocity. A team uses voltage for motor control. 8.3 is to convert voltage to percent. Motor max is 12V.
+        left_motors.spin(FORWARD, drive_speed * 8.3 + heading_correction_speed * 8.3,  VelocityUnits.PERCENT)
+        right_motors.spin(FORWARD, drive_speed * 8.3 - heading_correction_speed * 8.3 , VelocityUnits.PERCENT)
+        wait(20, MSEC)
+    left_motors.stop(BRAKE)
+    right_motors.stop(BRAKE)  
+
+
 def drive_PID(distance, max_power=8):
     """
         Simple PID driving function. No heading correction yet
@@ -68,7 +163,7 @@ def drive_PID(distance, max_power=8):
     # set drive PID params
     dr_Kp = 1.5
     dr_Ki = 0
-    dr_Kd = 8
+    dr_Kd = 12
     dr_start_integrate = 1
     dr_exit_erorr = 1
     integral = 0
@@ -130,6 +225,39 @@ def optimize_turning_angle(angle):
     elif angle > 180:
         angle = angle - 360
     return angle
+
+
+def turn_to_heading_PIDc(heading, max_power = 12):
+    """ 
+        Simple PID turning function. Turns robot to specified heading [0..360]
+    """
+    # set turn PID params
+    turn_Kp = 0.4
+    turn_Ki = 0.04
+    turn_Kd = 3
+    turn_start_integrate = 15
+    turn_exit_erorr = 1
+
+    # initial params
+    current_heading = brain_inertial.heading(DEGREES)
+    error = optimize_turning_angle(heading - current_heading)
+
+    turn_pid = PID(error, turn_Kp, turn_Ki, turn_Kd, turn_start_integrate, turn_exit_erorr, 2, max_power)
+    
+
+    while not turn_pid.isSettled:
+        # calculate error
+        current_heading = brain_inertial.heading(DEGREES)
+        error = optimize_turning_angle(heading - current_heading)
+
+        turn_speed = turn_pid.caclulate(error)
+        # set motor velocity. A team uses voltage for motor control. 8.3 is to convert voltage to percent. Motor max is 12V.
+        left_motors.spin(FORWARD,  turn_speed * 8.3, VelocityUnits.PERCENT)
+        right_motors.spin(FORWARD, -1 * turn_speed * 8.3, VelocityUnits.PERCENT)
+        wait(20, MSEC)
+
+    left_motors.stop(BRAKE)
+    right_motors.stop(BRAKE)
 
 
 def turn_to_heading_PID(heading, max_power = 12):
@@ -239,6 +367,13 @@ def clamp():
     else:
         clamp_pneumatic.set(False) 
 
+def hang():
+    """ Pneumatic clamp function
+    """
+    if not hang_pneumatic.value():
+        hang_pneumatic.set(True)
+    else:
+        hang_pneumatic.set(False) 
 
 def intake(dir = FORWARD, spd = 90):
     """ Start and Stop Intake
@@ -273,22 +408,17 @@ def score():
 def autonomous():
     """ Add autonomous code
     """
-    # test for adjusted embedded P controller Kp
-    smartdrive.drive_for(25, INCHES)
-    wait(0.2, SECONDS)
-    smartdrive.turn_to_heading(180)
 
     # test for external PID
-    drive_PID(25)
-    wait(1, SECONDS)
-    drive_PID(-25)
-
-    wait(1, SECONDS)
-    turn_to_heading_PID(180)
-    wait(1, SECONDS)
-    turn_to_heading_PID(270)
-    wait(1, SECONDS)
+    drive_PID(-29, 4)
+    wait(20, MSEC)
+    clamp()
+    wait(400, MSEC)
+    score()
+    wait(400, MSEC)
     turn_to_heading_PID(0)
+    wait(200, MSEC)
+    drive_PID(30);
 
 
 def user_control():
@@ -312,6 +442,7 @@ brain.screen.clear_screen()
 
 # bind button callback functions
 controller.buttonL1.pressed(clamp)
+controller.buttonUp.pressed(hang)
 controller.buttonR1.pressed(score)
 
 # set params, calibrate inertial
