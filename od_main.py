@@ -76,14 +76,17 @@ class PID:
 ############################################################################################################################################
 
 class Robot:
-    def __init__(self, inertial, left_motor_group, right_motor_group, gear_ratio, robot_wheel_diameter, horizontal_tracker = None, vertical_tracker = None):
+    def __init__(self, inertial, left_motor_group, right_motor_group, gear_ratio, tracker_wheel_diameter, horizontal_tracker = None, vertical_tracker = None):
         self.inertial = inertial
         self.left_motor_group = left_motor_group
         self.right_motor_group = right_motor_group
         self.gear_ratio = gear_ratio
-        self.robot_wheel_diameter = robot_wheel_diameter
+        self.tracker_wheel_diameter = tracker_wheel_diameter
+        self.tracker_wheel_circumference =  self.tracker_wheel_diameter * 3.14159  
         self.horizontal_tracker = horizontal_tracker
         self.vertical_tracker = vertical_tracker
+
+
 
         # default drive PID params
         self.dr_Kp = 1.5
@@ -160,12 +163,10 @@ class Robot:
             Returns traveled postion in inches based on motor rotations, wheel diameter, gear ratio.
         """
         if self.vertical_tracker:
-            # code rotation sensor later
-            pass
+            position_inches = self.vertical_tracker.position(TURNS) * self.tracker_wheel_circumference
         else:
             average_position = (self.right_motor_group.position(TURNS) + self.left_motor_group.position(TURNS))/2 
-            wheel_circumference =  self.robot_wheel_diameter * 3.14159  
-            position_inches = average_position * wheel_circumference * self.gear_ratio
+            position_inches = average_position * self.tracker_wheel_circumference * self.gear_ratio
         return position_inches
     
     def get_horizontal_position(self):
@@ -174,8 +175,7 @@ class Robot:
             for future use.
         """
         if self.horizontal_tracker:
-            # code rotation sensor later
-            position_inches = 0
+            position_inches = self.horizontal_tracker.position(TURNS) * self.tracker_wheel_circumference
         else:
             position_inches = 0
         return position_inches       
@@ -193,7 +193,7 @@ class Robot:
     def update_position(self):
         """ 
             future odometry. Using okhavroniuk@woodcrest code converted to Python :)
-            only using forward tracking for now (motor encoders)
+            only using forward tracking for now (or motor encoders)
 
         """
         # get encoders info
